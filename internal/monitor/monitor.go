@@ -176,9 +176,10 @@ func (s *Service) doHTTPCheck(m *models.UptimeMonitor) CheckResult {
 func (s *Service) doTCPCheck(m *models.UptimeMonitor) CheckResult {
 	timeout := time.Duration(m.TimeoutSec) * time.Second
 
-	// Parse host:port from URL
+	// Resolve target: accept plain IP/host, host:port, or full URL
 	host := m.URL
 	if u, err := url.Parse(m.URL); err == nil && u.Host != "" {
+		// Full URL with scheme (e.g. https://domain.com)
 		host = u.Host
 		if u.Port() == "" {
 			if u.Scheme == "https" {
@@ -186,6 +187,15 @@ func (s *Service) doTCPCheck(m *models.UptimeMonitor) CheckResult {
 			} else {
 				host = net.JoinHostPort(u.Hostname(), "80")
 			}
+		}
+	} else {
+		// Plain IP/host or host:port — ensure port is present
+		h, p, err := net.SplitHostPort(host)
+		if err != nil {
+			// No port specified — default to 80
+			host = net.JoinHostPort(h, "80")
+		} else {
+			host = net.JoinHostPort(h, p)
 		}
 	}
 
