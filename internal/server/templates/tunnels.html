@@ -99,9 +99,10 @@
             <div class="flex items-center">
                 <input type="text" id="reserveSubdomain" 
                     class="flex-1 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-l-lg focus:outline-none focus:border-indigo-500 text-white placeholder-gray-500 font-mono"
-                    placeholder="myapp" pattern="[a-z0-9\-]+" maxlength="63">
+                    placeholder="myapp" pattern="[a-z0-9\-]+" maxlength="61">
                 <span class="px-3 py-3 bg-gray-800 border border-l-0 border-gray-700 rounded-r-lg text-gray-400 text-sm">.{{.Domain}}</span>
             </div>
+            <p class="mt-2 text-xs text-gray-500">2 random characters will be appended for uniqueness, e.g. <span id="previewSubdomain" class="text-cyan-400 font-mono">myapp-a3</span>.{{.Domain}}</p>
             <div id="reserveError" class="mt-2 text-red-400 text-sm hidden"></div>
         </div>
 
@@ -120,6 +121,18 @@
 {{end}}
 {{define "scripts"}}
 <script>
+// Update preview hint as user types
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('reserveSubdomain');
+    const preview = document.getElementById('previewSubdomain');
+    if (input && preview) {
+        input.addEventListener('input', function() {
+            const val = input.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '');
+            preview.textContent = val ? val + '-??' : 'myapp-??';
+        });
+    }
+});
+
 async function reserveSubdomain() {
     const input = document.getElementById('reserveSubdomain');
     const errorEl = document.getElementById('reserveError');

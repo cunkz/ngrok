@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -342,6 +343,12 @@ func (s *Server) handleAPIReserveTunnel(w http.ResponseWriter, r *http.Request, 
 		jsonError(w, "Subdomain is required", 400)
 		return
 	}
+
+	// Append 2 random alphanumeric chars for uniqueness
+	if len(subdomain) > 61 {
+		subdomain = subdomain[:61]
+	}
+	subdomain = subdomain + "-" + randomSuffix(2)
 
 	// Check max tunnels
 	tunnels, _ := s.db.GetTunnelsByUserID(user.ID)
@@ -731,6 +738,24 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// randomSuffix returns n random lowercase alphanumeric characters.
+func randomSuffix(n int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	rb := make([]byte, n)
+	if _, err := rand.Read(rb); err != nil {
+		// fallback: use 'aa' if crypto/rand fails (should not happen)
+		for i := range b {
+			b[i] = 'a'
+		}
+		return string(b)
+	}
+	for i := range b {
+		b[i] = chars[int(rb[i])%len(chars)]
+	}
+	return string(b)
 }
 // --- Uptime Monitoring Handlers ---
 
