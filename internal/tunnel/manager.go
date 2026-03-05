@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -114,13 +115,21 @@ func (m *Manager) HandleWebSocket(w http.ResponseWriter, r *http.Request, user *
 
 	// Create or update tunnel record in DB
 	if err != nil {
-		// Tunnel doesn't exist, create it
+		// Tunnel doesn't exist — append 2 random chars for uniqueness
+		base := subdomain
+		if len(base) > 61 {
+			base = base[:61]
+		}
+		subdomain = base + "-" + randomSuffix(2)
 		_, err = m.db.CreateTunnel(user.ID, subdomain, false)
 		if err != nil {
 			sendError(conn, "Failed to create tunnel: "+err.Error())
 			conn.Close()
 			return
 		}
+	} else {
+		// Tunnel already exists in DB — use the stored subdomain (which has the suffix)
+		subdomain = existingTunnel.Subdomain
 	}
 
 	// Check if there's already an active connection for this subdomain
@@ -374,6 +383,23 @@ func (tc *Connection) sendMessageSafe(msgType string, id string, payload interfa
 
 func sendError(conn *websocket.Conn, errMsg string) {
 	sendMessage(conn, protocol.TypeTunnelError, "", protocol.TunnelErrorPayload{Error: errMsg})
+}
+
+// randomSuffix returns n random lowercase alphanumeric characters.
+func randomSuffix(n int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	rb := make([]byte, n)
+	if _, err := rand.Read(rb); err != nil {
+		for i := range b {
+			b[i] = 'a'
+		}
+		return string(b)
+	}
+	for i := range b {
+		b[i] = chars[int(rb[i])%len(chars)]
+	}
+	return string(b)
 }
 
 func isValidSubdomain(s string) bool {
