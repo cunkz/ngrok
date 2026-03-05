@@ -41,6 +41,10 @@ func (s *Server) proxyHandler() http.Handler {
 				http.Error(w, "Not Found", http.StatusNotFound)
 				return
 			}
+			// Mark domain active on first successful resolution
+			if cd.Status == "pending" {
+				_ = s.db.UpdateCustomDomainStatus(cd.ID, "active")
+			}
 			subdomain = t.Subdomain
 		}
 

@@ -60,6 +60,7 @@ type DB interface {
 	GetCustomDomainsByTunnelID(tunnelID int64) ([]*models.CustomDomain, error)
 	GetCustomDomainsByUserID(userID int64) ([]*models.CustomDomain, error)
 	GetCustomDomainByDomain(domain string) (*models.CustomDomain, error)
+	UpdateCustomDomainStatus(id int64, status string) error
 	DeleteCustomDomain(id int64, userID int64) error
 
 	// Connection management

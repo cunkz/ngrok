@@ -684,6 +684,11 @@ func (db *MySQLDB) GetCustomDomainByDomain(domain string) (*models.CustomDomain,
 	return cd, nil
 }
 
+func (db *MySQLDB) UpdateCustomDomainStatus(id int64, status string) error {
+	_, err := db.conn.Exec(`UPDATE custom_domains SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
 func (db *MySQLDB) DeleteCustomDomain(id int64, userID int64) error {
 	_, err := db.conn.Exec(`DELETE FROM custom_domains WHERE id = ? AND user_id = ?`, id, userID)
 	return err
