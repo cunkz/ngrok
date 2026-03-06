@@ -18,6 +18,7 @@ type DB interface {
 	UpdateUserPassword(userID int64, passwordHash string) error
 	UpdateUserAdmin(userID int64, isAdmin bool) error
 	UpdateUserMaxTunnels(userID int64, maxTunnels int) error
+	UpdateUserMaxUptimeMonitors(userID int64, max int) error
 	DeleteUser(id int64) error
 	GetAllUsers() ([]*models.User, error)
 	UserCount() (int, error)
@@ -54,6 +55,14 @@ type DB interface {
 	LogUptimeCheck(monitorID int64, status string, latencyMs float64, statusCode int, errMsg string) error
 	GetUptimeLogs(monitorID int64, limit int) ([]*models.UptimeLog, error)
 	GetUptimePct(monitorID int64, hours int) (float64, error)
+
+	// Custom domain operations
+	CreateCustomDomain(userID, tunnelID int64, domain string) (*models.CustomDomain, error)
+	GetCustomDomainsByTunnelID(tunnelID int64) ([]*models.CustomDomain, error)
+	GetCustomDomainsByUserID(userID int64) ([]*models.CustomDomain, error)
+	GetCustomDomainByDomain(domain string) (*models.CustomDomain, error)
+	UpdateCustomDomainStatus(id int64, status string) error
+	DeleteCustomDomain(id int64, userID int64) error
 
 	// Connection management
 	Close() error

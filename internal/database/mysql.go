@@ -67,6 +67,7 @@ func (db *MySQLDB) migrate() error {
 			auth_token VARCHAR(255) UNIQUE NOT NULL,
 			is_admin BOOLEAN DEFAULT FALSE,
 			max_tunnels INT DEFAULT 5,
+			max_uptime_monitors INT DEFAULT 3,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			INDEX idx_auth_token (auth_token)
@@ -136,6 +137,19 @@ func (db *MySQLDB) migrate() error {
 			INDEX idx_monitor_id (monitor_id),
 			INDEX idx_checked_at (checked_at)
 		)`,
+		`CREATE TABLE IF NOT EXISTS custom_domains (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			tunnel_id BIGINT NOT NULL,
+			user_id BIGINT NOT NULL,
+			domain VARCHAR(253) UNIQUE NOT NULL,
+			status VARCHAR(50) DEFAULT 'pending',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (tunnel_id) REFERENCES tunnels(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			INDEX idx_domain (domain),
+			INDEX idx_tunnel_id (tunnel_id)
+		)`,
+		`ALTER TABLE users ADD COLUMN max_uptime_monitors INT DEFAULT 3`,
 	} {
 		if _, err := db.conn.Exec(stmt); err != nil {
 			// Table might already exist, continue
@@ -163,9 +177,9 @@ func (db *MySQLDB) CreateUser(email, username, passwordHash, authToken string) (
 func (db *MySQLDB) GetUserByID(id int64) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE id = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE id = ?`,
 		id,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -175,9 +189,9 @@ func (db *MySQLDB) GetUserByID(id int64) (*models.User, error) {
 func (db *MySQLDB) GetUserByEmail(email string) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE email = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE email = ?`,
 		email,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -187,9 +201,9 @@ func (db *MySQLDB) GetUserByEmail(email string) (*models.User, error) {
 func (db *MySQLDB) GetUserByUsername(username string) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE username = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +213,9 @@ func (db *MySQLDB) GetUserByUsername(username string) (*models.User, error) {
 func (db *MySQLDB) GetUserByAuthToken(token string) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE auth_token = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE auth_token = ?`,
 		token,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +248,7 @@ func (db *MySQLDB) UpdateUserAdmin(userID int64, isAdmin bool) error {
 
 func (db *MySQLDB) GetAllUsers() ([]*models.User, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users ORDER BY created_at DESC`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -244,7 +258,7 @@ func (db *MySQLDB) GetAllUsers() ([]*models.User, error) {
 	var users []*models.User
 	for rows.Next() {
 		user := &models.User{}
-		err := rows.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+		err := rows.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -264,6 +278,15 @@ func (db *MySQLDB) UpdateUserMaxTunnels(userID int64, maxTunnels int) error {
 	_, err := db.conn.Exec(
 		`UPDATE users SET max_tunnels = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		maxTunnels, userID,
+	)
+	return err
+}
+
+// UpdateUserMaxUptimeMonitors updates the max uptime monitors allowed for a user
+func (db *MySQLDB) UpdateUserMaxUptimeMonitors(userID int64, max int) error {
+	_, err := db.conn.Exec(
+		`UPDATE users SET max_uptime_monitors = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		max, userID,
 	)
 	return err
 }
@@ -601,4 +624,83 @@ func (db *MySQLDB) GetUptimePct(monitorID int64, hours int) (float64, error) {
 		monitorID, hours,
 	).Scan(&up)
 	return float64(up) / float64(total) * 100, nil
+}
+
+// --- Custom Domain operations ---
+
+func (db *MySQLDB) CreateCustomDomain(userID, tunnelID int64, domain string) (*models.CustomDomain, error) {
+	result, err := db.conn.Exec(
+		`INSERT INTO custom_domains (tunnel_id, user_id, domain) VALUES (?, ?, ?)`,
+		tunnelID, userID, domain,
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := result.LastInsertId()
+	cd := &models.CustomDomain{}
+	err = db.conn.QueryRow(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE id = ?`, id,
+	).Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt)
+	return cd, err
+}
+
+func (db *MySQLDB) GetCustomDomainsByTunnelID(tunnelID int64) ([]*models.CustomDomain, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE tunnel_id = ? ORDER BY created_at DESC`,
+		tunnelID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*models.CustomDomain
+	for rows.Next() {
+		cd := &models.CustomDomain{}
+		if err := rows.Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, cd)
+	}
+	return list, nil
+}
+
+func (db *MySQLDB) GetCustomDomainsByUserID(userID int64) ([]*models.CustomDomain, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE user_id = ? ORDER BY created_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*models.CustomDomain
+	for rows.Next() {
+		cd := &models.CustomDomain{}
+		if err := rows.Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, cd)
+	}
+	return list, nil
+}
+
+func (db *MySQLDB) GetCustomDomainByDomain(domain string) (*models.CustomDomain, error) {
+	cd := &models.CustomDomain{}
+	err := db.conn.QueryRow(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE domain = ?`, domain,
+	).Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return cd, nil
+}
+
+func (db *MySQLDB) UpdateCustomDomainStatus(id int64, status string) error {
+	_, err := db.conn.Exec(`UPDATE custom_domains SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+func (db *MySQLDB) DeleteCustomDomain(id int64, userID int64) error {
+	_, err := db.conn.Exec(`DELETE FROM custom_domains WHERE id = ? AND user_id = ?`, id, userID)
+	return err
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -32,9 +33,15 @@ type dashboardData struct {
 }
 
 type tunnelsData struct {
-	Tunnels     []*models.Tunnel
+	Tunnels     []*tunnelWithDomains
 	Connections []*models.ConnectionInfo
 	Domain      string
+	Pagination  pagination
+}
+
+type tunnelWithDomains struct {
+	*models.Tunnel
+	CustomDomains []*models.CustomDomain
 }
 
 type installData struct {
@@ -226,21 +233,42 @@ func (s *Server) handleTunnels(w http.ResponseWriter, r *http.Request, user *mod
 	for _, c := range connections {
 		activeSubdomains[c.Subdomain] = true
 	}
+
+	var allTunnels []*tunnelWithDomains
 	for _, t := range tunnels {
 		if activeSubdomains[t.Subdomain] {
 			t.Status = "online"
 		} else {
 			t.Status = "offline"
 		}
+		cds, _ := s.db.GetCustomDomainsByTunnelID(t.ID)
+		allTunnels = append(allTunnels, &tunnelWithDomains{
+			Tunnel:        t,
+			CustomDomains: cds,
+		})
+	}
+
+	const pageSize = 10
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pg := newPagination(len(allTunnels), page, pageSize)
+	start := (pg.Page - 1) * pageSize
+	end := start + pageSize
+	if end > len(allTunnels) {
+		end = len(allTunnels)
+	}
+	var pagedTunnels []*tunnelWithDomains
+	if start < len(allTunnels) {
+		pagedTunnels = allTunnels[start:end]
 	}
 
 	s.render(w, r, "tunnels.html", &pageData{
 		User:   user,
 		Domain: s.config.Domain,
 		Data: tunnelsData{
-			Tunnels:     tunnels,
+			Tunnels:     pagedTunnels,
 			Connections: connections,
 			Domain:      s.config.Domain,
+			Pagination:  pg,
 		},
 	})
 }
@@ -342,6 +370,12 @@ func (s *Server) handleAPIReserveTunnel(w http.ResponseWriter, r *http.Request, 
 		jsonError(w, "Subdomain is required", 400)
 		return
 	}
+
+	// Append 2 random alphanumeric chars for uniqueness
+	if len(subdomain) > 61 {
+		subdomain = subdomain[:61]
+	}
+	subdomain = subdomain + "-" + randomSuffix(2)
 
 	// Check max tunnels
 	tunnels, _ := s.db.GetTunnelsByUserID(user.ID)
@@ -456,18 +490,63 @@ func (s *Server) handleAPIStats(w http.ResponseWriter, r *http.Request, user *mo
 	jsonResponse(w, stats)
 }
 
+// --- Pagination ---
+
+type pagination struct {
+	Page       int
+	PageSize   int
+	Total      int
+	TotalPages int
+	HasPrev    bool
+	HasNext    bool
+}
+
+func newPagination(total, page, pageSize int) pagination {
+	if page < 1 {
+		page = 1
+	}
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	return pagination{
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      total,
+		TotalPages: totalPages,
+		HasPrev:    page > 1,
+		HasNext:    page < totalPages,
+	}
+}
+
 // --- Admin Handlers ---
 
 type adminUsersData struct {
-	Users []*models.User
+	Users      []*models.User
+	Pagination pagination
 }
 
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request, user *models.User) {
 	users, _ := s.db.GetAllUsers()
+	const pageSize = 10
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pg := newPagination(len(users), page, pageSize)
+	start := (pg.Page - 1) * pageSize
+	end := start + pageSize
+	if end > len(users) {
+		end = len(users)
+	}
+	var paged []*models.User
+	if start < len(users) {
+		paged = users[start:end]
+	}
 	s.render(w, r, "admin-users.html", &pageData{
 		User:   user,
 		Domain: s.config.Domain,
-		Data:   adminUsersData{Users: users},
+		Data:   adminUsersData{Users: paged, Pagination: pg},
 	})
 }
 
@@ -562,9 +641,10 @@ func (s *Server) handleAPIAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		UserID     int64 `json:"user_id"`
-		IsAdmin    *bool `json:"is_admin"`
-		MaxTunnels *int  `json:"max_tunnels"`
+		UserID            int64 `json:"user_id"`
+		IsAdmin           *bool `json:"is_admin"`
+		MaxTunnels        *int  `json:"max_tunnels"`
+		MaxUptimeMonitors *int  `json:"max_uptime_monitors"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request body", 400)
@@ -600,6 +680,18 @@ func (s *Server) handleAPIAdminUpdateUser(w http.ResponseWriter, r *http.Request
 			return
 		}
 		target.MaxTunnels = *req.MaxTunnels
+	}
+
+	if req.MaxUptimeMonitors != nil {
+		if *req.MaxUptimeMonitors < 0 || *req.MaxUptimeMonitors > 100 {
+			jsonError(w, "Max uptime monitors must be between 0 and 100", 400)
+			return
+		}
+		if err := s.db.UpdateUserMaxUptimeMonitors(req.UserID, *req.MaxUptimeMonitors); err != nil {
+			jsonError(w, "Failed to update max uptime monitors", 500)
+			return
+		}
+		target.MaxUptimeMonitors = *req.MaxUptimeMonitors
 	}
 
 	jsonResponse(w, target)
@@ -732,10 +824,113 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
+
+// randomSuffix returns n random lowercase alphanumeric characters.
+func randomSuffix(n int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	rb := make([]byte, n)
+	if _, err := rand.Read(rb); err != nil {
+		// fallback: use 'aa' if crypto/rand fails (should not happen)
+		for i := range b {
+			b[i] = 'a'
+		}
+		return string(b)
+	}
+	for i := range b {
+		b[i] = chars[int(rb[i])%len(chars)]
+	}
+	return string(b)
+}
+
+// isValidDomain validates a plain hostname (no scheme, no path).
+func isValidDomain(d string) bool {
+	if len(d) == 0 || len(d) > 253 || strings.Contains(d, "://") {
+		return false
+	}
+	labels := strings.Split(d, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if len(l) == 0 || len(l) > 63 {
+			return false
+		}
+		for i, c := range l {
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+				continue
+			}
+			if c == '-' && i > 0 && i < len(l)-1 {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+// handleAPIAddCustomDomain adds a custom domain to a tunnel.
+func (s *Server) handleAPIAddCustomDomain(w http.ResponseWriter, r *http.Request, user *models.User) {
+	if r.Method != "POST" {
+		jsonError(w, "Method not allowed", 405)
+		return
+	}
+	var req struct {
+		TunnelID int64  `json:"tunnel_id"`
+		Domain   string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request body", 400)
+		return
+	}
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	if domain == "" {
+		jsonError(w, "Domain is required", 400)
+		return
+	}
+	if !isValidDomain(domain) {
+		jsonError(w, "Invalid domain format. Use plain hostname, e.g. app.example.com", 400)
+		return
+	}
+	// Verify tunnel belongs to user
+	t, err := s.db.GetTunnelByID(req.TunnelID)
+	if err != nil || t.UserID != user.ID {
+		jsonError(w, "Tunnel not found", 404)
+		return
+	}
+	cd, err := s.db.CreateCustomDomain(user.ID, req.TunnelID, domain)
+	if err != nil {
+		jsonError(w, "Failed to add domain: "+err.Error(), 500)
+		return
+	}
+	jsonResponse(w, cd)
+}
+
+// handleAPIDeleteCustomDomain removes a custom domain.
+func (s *Server) handleAPIDeleteCustomDomain(w http.ResponseWriter, r *http.Request, user *models.User) {
+	if r.Method != "POST" {
+		jsonError(w, "Method not allowed", 405)
+		return
+	}
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request body", 400)
+		return
+	}
+	if err := s.db.DeleteCustomDomain(req.ID, user.ID); err != nil {
+		jsonError(w, "Failed to delete domain", 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
 // --- Uptime Monitoring Handlers ---
 
 type uptimePageData struct {
-	Monitors []*uptimeMonitorView
+	Monitors   []*uptimeMonitorView
+	Pagination pagination
 }
 
 type uptimeMonitorView struct {
@@ -765,6 +960,21 @@ func (s *Server) handleUptime(w http.ResponseWriter, r *http.Request, user *mode
 		monitors = nil
 	}
 
+	// Paginate the monitors list before building views (avoid loading logs for off-page items)
+	const pageSize = 5
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pg := newPagination(len(monitors), page, pageSize)
+	start := (pg.Page - 1) * pageSize
+	end := start + pageSize
+	if end > len(monitors) {
+		end = len(monitors)
+	}
+	if start < len(monitors) {
+		monitors = monitors[start:end]
+	} else {
+		monitors = nil
+	}
+
 	views := make([]*uptimeMonitorView, 0, len(monitors))
 	for _, m := range monitors {
 		pct, _ := s.db.GetUptimePct(m.ID, 24)
@@ -777,13 +987,13 @@ func (s *Server) handleUptime(w http.ResponseWriter, r *http.Request, user *mode
 				LatencyMs:  l.LatencyMs,
 				StatusCode: l.StatusCode,
 				Error:      l.Error,
-				CheckedAt:  l.CheckedAt.Format("2006-01-02 15:04:05"),
+				CheckedAt:  l.CheckedAt.Local().Format("2006-01-02 15:04:05"),
 			})
 		}
 
 		lastChecked := "Never"
 		if m.LastCheckedAt != nil {
-			lastChecked = m.LastCheckedAt.Format("2006-01-02 15:04:05")
+			lastChecked = m.LastCheckedAt.Local().Format("2006-01-02 15:04:05")
 		}
 
 		views = append(views, &uptimeMonitorView{
@@ -803,7 +1013,7 @@ func (s *Server) handleUptime(w http.ResponseWriter, r *http.Request, user *mode
 	s.render(w, r, "uptime.html", &pageData{
 		User:   user,
 		Domain: s.config.Domain,
-		Data:   &uptimePageData{Monitors: views},
+		Data:   &uptimePageData{Monitors: views, Pagination: pg},
 	})
 }
 
@@ -823,6 +1033,14 @@ func (s *Server) handleAPIAddMonitor(w http.ResponseWriter, r *http.Request, use
 		jsonError(w, "name and url are required", http.StatusBadRequest)
 		return
 	}
+
+	// Enforce per-user uptime monitor limit
+	existingMonitors, err := s.db.GetUptimeMonitorsByUserID(user.ID)
+	if err == nil && len(existingMonitors) >= user.MaxUptimeMonitors {
+		jsonError(w, fmt.Sprintf("Maximum %d uptime monitors allowed", user.MaxUptimeMonitors), http.StatusBadRequest)
+		return
+	}
+
 	if checkType != "tcp" {
 		checkType = "http"
 	}

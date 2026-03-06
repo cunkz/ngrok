@@ -117,6 +117,24 @@
             </div>
             {{end}}
         </div>
+        {{if gt $data.Pagination.TotalPages 1}}
+        <div class="flex items-center justify-between mt-4 text-sm">
+            <span class="text-gray-500">{{$data.Pagination.Total}} monitors &mdash; page {{$data.Pagination.Page}} of {{$data.Pagination.TotalPages}}</span>
+            <div class="flex items-center gap-1">
+                {{if $data.Pagination.HasPrev}}
+                <a href="?page={{sub $data.Pagination.Page 1}}" class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">← Prev</a>
+                {{else}}
+                <span class="px-3 py-1.5 rounded-lg bg-gray-800/30 text-gray-600">← Prev</span>
+                {{end}}
+                <span class="px-2 text-gray-500">{{$data.Pagination.Page}} / {{$data.Pagination.TotalPages}}</span>
+                {{if $data.Pagination.HasNext}}
+                <a href="?page={{add $data.Pagination.Page 1}}" class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">Next →</a>
+                {{else}}
+                <span class="px-3 py-1.5 rounded-lg bg-gray-800/30 text-gray-600">Next →</span>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
         {{else}}
         <div class="card rounded-xl p-12 text-center text-gray-500">
             <div class="text-5xl mb-4">📡</div>
@@ -139,17 +157,12 @@
                 <label class="block text-sm font-medium text-gray-400 mb-1">Name</label>
                 <input type="text" name="name" required placeholder="My Site" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
             </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">URL or Host</label>
-                <input type="text" name="url" required placeholder="https://digitalproduk.net" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-indigo-500">
-                <p class="text-xs text-gray-500 mt-1">For HTTP: <code>https://domain.com</code> · For TCP: <code>domain.com:443</code></p>
-            </div>
             <div class="grid grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-400 mb-1">Check Type</label>
-                    <select name="check_type" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                    <select id="checkTypeSelect" name="check_type" onchange="onCheckTypeChange()" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
                         <option value="http">HTTP (curl)</option>
-                        <option value="tcp">TCP (ping)</option>
+                        <option value="tcp">Ping (TCP)</option>
                     </select>
                 </div>
                 <div>
@@ -159,6 +172,11 @@
                         <option value="5" selected>Every 5 minutes</option>
                     </select>
                 </div>
+            </div>
+            <div>
+                <label id="urlLabel" class="block text-sm font-medium text-gray-400 mb-1">URL</label>
+                <input type="text" id="urlInput" name="url" required placeholder="https://domain.com" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-indigo-500">
+                <p id="urlHint" class="text-xs text-gray-500 mt-1">Example: <code>https://domain.com</code></p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-400 mb-1">Timeout (seconds)</label>
@@ -173,6 +191,22 @@
 </div>
 
 <script>
+function onCheckTypeChange() {
+    const type = document.getElementById('checkTypeSelect').value;
+    const label = document.getElementById('urlLabel');
+    const input = document.getElementById('urlInput');
+    const hint  = document.getElementById('urlHint');
+    if (type === 'tcp') {
+        label.textContent = 'IP Address / Host:Port';
+        input.placeholder = '192.168.1.1:22';
+        hint.innerHTML = 'Format: <code>IP:port</code> or <code>hostname:port</code>, e.g. <code>8.8.8.8:53</code>';
+    } else {
+        label.textContent = 'URL';
+        input.placeholder = 'https://domain.com';
+        hint.innerHTML = 'Example: <code>https://domain.com</code>';
+    }
+}
+
 // Auto-refresh status every 30 seconds
 setInterval(async () => {
     try {

@@ -58,6 +58,7 @@ func (db *SQLiteDB) migrate() error {
 		auth_token TEXT UNIQUE NOT NULL,
 		is_admin BOOLEAN DEFAULT FALSE,
 		max_tunnels INTEGER DEFAULT 5,
+		max_uptime_monitors INTEGER DEFAULT 3,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -133,9 +134,114 @@ func (db *SQLiteDB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_uptime_monitors_user_id ON uptime_monitors(user_id);
 	CREATE INDEX IF NOT EXISTS idx_uptime_logs_monitor_id ON uptime_logs(monitor_id);
 	CREATE INDEX IF NOT EXISTS idx_uptime_logs_checked_at ON uptime_logs(checked_at);
+
+	CREATE TABLE IF NOT EXISTS custom_domains (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		tunnel_id INTEGER NOT NULL,
+		user_id INTEGER NOT NULL,
+		domain TEXT UNIQUE NOT NULL,
+		status TEXT DEFAULT 'pending',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (tunnel_id) REFERENCES tunnels(id) ON DELETE CASCADE,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_custom_domains_domain ON custom_domains(domain);
+	CREATE INDEX IF NOT EXISTS idx_custom_domains_tunnel ON custom_domains(tunnel_id);
 	`
 
 	_, err := db.conn.Exec(schema)
+	if err != nil {
+		return err
+	}
+	// Add columns for existing databases (error ignored if already present)
+	db.conn.Exec(`ALTER TABLE users ADD COLUMN max_uptime_monitors INTEGER DEFAULT 3`)
+	return nil
+}
+
+// --- Custom Domain operations ---
+
+func (db *SQLiteDB) CreateCustomDomain(userID, tunnelID int64, domain string) (*models.CustomDomain, error) {
+	result, err := db.conn.Exec(
+		`INSERT INTO custom_domains (tunnel_id, user_id, domain) VALUES (?, ?, ?)`,
+		tunnelID, userID, domain,
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := result.LastInsertId()
+	return db.getCustomDomainByID(id)
+}
+
+func (db *SQLiteDB) getCustomDomainByID(id int64) (*models.CustomDomain, error) {
+	cd := &models.CustomDomain{}
+	err := db.conn.QueryRow(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE id = ?`, id,
+	).Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return cd, nil
+}
+
+func (db *SQLiteDB) GetCustomDomainsByTunnelID(tunnelID int64) ([]*models.CustomDomain, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE tunnel_id = ? ORDER BY created_at DESC`,
+		tunnelID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*models.CustomDomain
+	for rows.Next() {
+		cd := &models.CustomDomain{}
+		if err := rows.Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, cd)
+	}
+	return list, nil
+}
+
+func (db *SQLiteDB) GetCustomDomainsByUserID(userID int64) ([]*models.CustomDomain, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE user_id = ? ORDER BY created_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*models.CustomDomain
+	for rows.Next() {
+		cd := &models.CustomDomain{}
+		if err := rows.Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, cd)
+	}
+	return list, nil
+}
+
+func (db *SQLiteDB) GetCustomDomainByDomain(domain string) (*models.CustomDomain, error) {
+	cd := &models.CustomDomain{}
+	err := db.conn.QueryRow(
+		`SELECT id, tunnel_id, user_id, domain, status, created_at FROM custom_domains WHERE domain = ?`, domain,
+	).Scan(&cd.ID, &cd.TunnelID, &cd.UserID, &cd.Domain, &cd.Status, &cd.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return cd, nil
+}
+
+func (db *SQLiteDB) UpdateCustomDomainStatus(id int64, status string) error {
+	_, err := db.conn.Exec(`UPDATE custom_domains SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+func (db *SQLiteDB) DeleteCustomDomain(id int64, userID int64) error {
+	_, err := db.conn.Exec(`DELETE FROM custom_domains WHERE id = ? AND user_id = ?`, id, userID)
 	return err
 }
 
@@ -159,9 +265,9 @@ func (db *SQLiteDB) CreateUser(email, username, passwordHash, authToken string) 
 func (db *SQLiteDB) GetUserByID(id int64) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE id = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE id = ?`,
 		id,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -172,9 +278,9 @@ func (db *SQLiteDB) GetUserByID(id int64) (*models.User, error) {
 func (db *SQLiteDB) GetUserByEmail(email string) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE email = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE email = ?`,
 		email,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -185,9 +291,9 @@ func (db *SQLiteDB) GetUserByEmail(email string) (*models.User, error) {
 func (db *SQLiteDB) GetUserByUsername(username string) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE username = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -198,9 +304,9 @@ func (db *SQLiteDB) GetUserByUsername(username string) (*models.User, error) {
 func (db *SQLiteDB) GetUserByAuthToken(token string) (*models.User, error) {
 	user := &models.User{}
 	err := db.conn.QueryRow(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users WHERE auth_token = ?`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users WHERE auth_token = ?`,
 		token,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +343,7 @@ func (db *SQLiteDB) UpdateUserAdmin(userID int64, isAdmin bool) error {
 // GetAllUsers returns all users (for admin)
 func (db *SQLiteDB) GetAllUsers() ([]*models.User, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, created_at, updated_at FROM users ORDER BY created_at DESC`,
+		`SELECT id, email, username, password_hash, auth_token, is_admin, max_tunnels, max_uptime_monitors, created_at, updated_at FROM users ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -247,7 +353,7 @@ func (db *SQLiteDB) GetAllUsers() ([]*models.User, error) {
 	var users []*models.User
 	for rows.Next() {
 		user := &models.User{}
-		err := rows.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.CreatedAt, &user.UpdatedAt)
+		err := rows.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.AuthToken, &user.IsAdmin, &user.MaxTunnels, &user.MaxUptimeMonitors, &user.CreatedAt, &user.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -268,6 +374,15 @@ func (db *SQLiteDB) UpdateUserMaxTunnels(userID int64, maxTunnels int) error {
 	_, err := db.conn.Exec(
 		`UPDATE users SET max_tunnels = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		maxTunnels, userID,
+	)
+	return err
+}
+
+// UpdateUserMaxUptimeMonitors updates the max uptime monitors allowed for a user
+func (db *SQLiteDB) UpdateUserMaxUptimeMonitors(userID int64, max int) error {
+	_, err := db.conn.Exec(
+		`UPDATE users SET max_uptime_monitors = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		max, userID,
 	)
 	return err
 }

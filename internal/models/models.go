@@ -9,9 +9,10 @@ type User struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
 	AuthToken    string    `json:"auth_token"`
-	IsAdmin      bool      `json:"is_admin"`
-	MaxTunnels   int       `json:"max_tunnels"`
-	CreatedAt    time.Time `json:"created_at"`
+	IsAdmin           bool      `json:"is_admin"`
+	MaxTunnels        int       `json:"max_tunnels"`
+	MaxUptimeMonitors int       `json:"max_uptime_monitors"`
+	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
@@ -75,6 +76,16 @@ type UptimeMonitor struct {
 	LastLatencyMs float64    `json:"last_latency_ms"`
 	UptimePct     float64    `json:"uptime_pct"`
 	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// CustomDomain maps a user-owned domain to a specific tunnel
+type CustomDomain struct {
+	ID        int64     `json:"id"`
+	TunnelID  int64     `json:"tunnel_id"`
+	UserID    int64     `json:"user_id"`
+	Domain    string    `json:"domain"`
+	Status    string    `json:"status"` // pending, active
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // UptimeLog represents a single uptime check result

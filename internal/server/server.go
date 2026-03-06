@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 
 	"gotunnel/internal/auth"
 	"gotunnel/internal/database"
@@ -98,6 +99,9 @@ func parseTemplates() (map[string]*template.Template, error) {
 			}
 			return s[:n] + "..."
 		},
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
+		"localTime": func(t time.Time, layout string) string { return t.Local().Format(layout) },
 	}
 
 	// Parse the shared base templates (base.html + sidebar.html)
@@ -184,6 +188,10 @@ func (s *Server) adminHandler() http.Handler {
 	mux.HandleFunc("/api/uptime/delete", s.requireAuth(s.handleAPIDeleteMonitor))
 	mux.HandleFunc("/api/uptime/logs", s.requireAuth(s.handleAPIUptimeLogs))
 	mux.HandleFunc("/api/uptime/status", s.requireAuth(s.handleAPIUptimeStatus))
+
+	// Custom domain routes
+	mux.HandleFunc("/api/custom-domains/add", s.requireAuth(s.handleAPIAddCustomDomain))
+	mux.HandleFunc("/api/custom-domains/delete", s.requireAuth(s.handleAPIDeleteCustomDomain))
 
 	// WebSocket tunnel endpoint
 	mux.HandleFunc("/ws/tunnel", s.handleTunnelWebSocket)
